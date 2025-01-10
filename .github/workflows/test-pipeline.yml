@@ -34,16 +34,19 @@ jobs:
           else
             TRIVY_RESULTS_MSG="No vulnerabilities found"
           fi
+          echo "TRIVY_RESULTS_MSG=$TRIVY_RESULTS_MSG" >> $GITHUB_ENV
 
       - name: Notify about HIGH+ vulnerabilities
+        env:
+          TRIVY_RESULTS_MSG: ${{ env.TRIVY_RESULTS_MSG }}
         # uses: slackapi/slack-github-action@v2
-        with:
+        # with:
           # method: chat.postMessage
           # token: ${{ secrets.SLACK_BOT_TOKEN }}
           # payload: |
           #   channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
           #   text: ":police_car: Trivy 'fs' scan of frontend\n${{ HIGH_COUNT }} high and ${{ CRITICAL_COUNT }} critical vulnerabilities"
-          run: |
-            echo ":police_car: Trivy 'fs' scan of fronted results:\n${{ TRIVY_RESULTS_MSG }}"
+        run: |
+          echo ":police_car: Trivy 'fs' scan of fronted results:\n$TRIVY_RESULTS_MSG"
 
 
