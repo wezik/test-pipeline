@@ -47,6 +47,7 @@ jobs:
           #   channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
           #   text: ":police_car: Trivy 'fs' scan of frontend\n${{ HIGH_COUNT }} high and ${{ CRITICAL_COUNT }} critical vulnerabilities"
         run: |
-          echo ":police_car: Trivy 'fs' scan of fronted results:\n$TRIVY_RESULTS_MSG"
+          echo ":police_car: Trivy 'fs' scan of fronted results:"
+          echo "$TRIVY_RESULTS_MSG"
 
 
