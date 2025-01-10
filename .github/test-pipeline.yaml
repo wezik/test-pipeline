@@ -1,0 +1,49 @@
+name: Trivy scan
+
+on:
+  push:
+
+jobs:
+  scan:
+    name: Scan
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan repository
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          output: 'trivy-scan-results.json'
+          format: 'json'
+
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'trivy-scan-results'
+          path: 'trivy-scan-results.json'
+          retention-days: 1
+
+      - name: Collect HIGH+ vulnerabilities
+        run: |
+          CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' trivy-scan-results.json)
+          HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' trivy-scan-results.json)
+          if [ $CRITICAL_COUNT -gt 0 ] || [ $HIGH_COUNT -gt 0 ]; then
+            TRIVY_RESULTS_MSG="Detected $HIGH_COUNT high and $CRITICAL_COUNT critical vulnerabilities"
+          else
+            TRIVY_RESULTS_MSG="No vulnerabilities found"
+          fi
+
+      - name: Notify about HIGH+ vulnerabilities
+        # uses: slackapi/slack-github-action@v2
+        with:
+          # method: chat.postMessage
+          # token: ${{ secrets.SLACK_BOT_TOKEN }}
+          # payload: |
+          #   channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
+          #   text: ":police_car: Trivy 'fs' scan of frontend\n${{ HIGH_COUNT }} high and ${{ CRITICAL_COUNT }} critical vulnerabilities"
+          run: |
+            echo ":police_car: Trivy 'fs' scan of fronted results:\n${{ TRIVY_RESULTS_MSG }}"
+
+
