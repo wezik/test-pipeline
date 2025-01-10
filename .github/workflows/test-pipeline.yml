@@ -38,17 +38,24 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Create docker URI
+      - name: Create ECR Image URI and fetch latest tag
         run: |
-          IMAGE_URI=$(\
+          REPO_URI=$(\
             aws ecr describe-repositories \
             --repository-names $ECR_REPOSITORY \
             --region $AWS_REGION \
             --query "repositories[0].repositoryUri" \
             --output text)
-          echo "IMAGE_URI=$IMAGE_URI:latest" >> $GITHUB_ENV
 
-      - name: Run Trivy image scan on latest ECR image
+          IMAGE_TAG=$(aws ecr describe-images \
+            --repository-name farutex-frontend \
+            --region eu-central-1 \
+            --query "sort_by(imageDetails, &imagePushedAt)[-1].imageTags[0]" \
+            --output json | jq -r) # Text format loses order of tags so it's a workaround to get the latest tag
+
+          echo "IMAGE_URI=$REPO_URI:$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Run Trivy image scan on ECR image
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE_URI }}
