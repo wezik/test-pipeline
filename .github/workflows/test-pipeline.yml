@@ -73,11 +73,14 @@ jobs:
             ${{ env.IMAGE_SCAN_OUTPUT }}
           retention-days: 1 # TODO: adjust the retention time it is only for testing
 
-      - name: Collect HIGH+ vulnerabilities
+      - name: Fromat Slack message
         env: 
           FS_SCAN_OUTPUT: ${{ env.FS_SCAN_OUTPUT }}
           IMAGE_SCAN_OUTPUT: ${{ env.IMAGE_SCAN_OUTPUT }}
+          REPOSITORY: ${{ env.ECR_REPOSITORY }}
         run: |
+          MSG=":oncoming_police_car: *Trivy Scan Results for $REPOSITORY!*"
+
           FS_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $FS_SCAN_OUTPUT)
           FS_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $FS_SCAN_OUTPUT)
 
@@ -99,7 +102,7 @@ jobs:
             FS_RESULT_MSG="$FS_RESULT_MSG No High or Critical vulnerabilities found :white_check_mark:"
           fi
 
-          echo "FS_RESULTS_MSG=$FS_RESULTS_MSG" >> $GITHUB_ENV
+          MSG="$MSG  \n$FS_RESULT_MSG"
 
           IMAGE_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $IMAGE_SCAN_OUTPUT)
           IMAGE_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $IMAGE_SCAN_OUTPUT)
@@ -122,23 +125,20 @@ jobs:
             IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG No High or Critical vulnerabilities found :white_check_mark:"
           fi
 
-          echo "IMAGE_RESULTS_MSG=$IMAGE_RESULT_MSG" >> $GITHUB_ENV
+          MSG="$MSG  \n$IMAGE_RESULT_MSG"
+          echo "SLACK_MESSAGE=$MSG" >> $GITHUB_ENV
 
-      - name: Notify about HIGH+ vulnerabilities
-        env:
-          FS_RESULTS_MSG: ${{ env.FS_RESULTS_MSG }}
-          IMAGE_RESULTS_MSG: ${{ env.IMAGE_RESULTS_MSG }}
-          TITLE: ":police_car: *Trivy Scan Results for ${{ env.ECR_REPOSITORY }}!*"
-        # uses: slackapi/slack-github-action@v2
-        # with:
-          # method: chat.postMessage
-          # token: ${{ secrets.SLACK_BOT_TOKEN }}
-          # payload: |
-          #   channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
-          #   text: ":police_car: Trivy 'fs' scan of frontend\n${{ HIGH_COUNT }} high and ${{ CRITICAL_COUNT }} critical vulnerabilities"
-        run: |
-          echo "$TITLE"
-          echo "$FS_RESULTS_MSG"
-          echo "$IMAGE_RESULTS_MSG"
-
+      - name: Send notification to Slack
+        uses: slackapi/slack-github-action@v2
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
+            text: "$SLACK_MSG"
+            blocks: 
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "${{ env.SLACK_MESSAGE }}"
 
