@@ -71,7 +71,7 @@ jobs:
           path: |
             ${{ env.FS_SCAN_OUTPUT }}
             ${{ env.IMAGE_SCAN_OUTPUT }}
-          retention-days: 1
+          retention-days: 1 # TODO: adjust the retention time it is only for testing
 
       - name: Collect HIGH+ vulnerabilities
         env: 
@@ -81,10 +81,22 @@ jobs:
           FS_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $FS_SCAN_OUTPUT)
           FS_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $FS_SCAN_OUTPUT)
 
-          if [ $FS_CRITICAL_COUNT -gt 0 ] || [ $FS_HIGH_COUNT -gt 0 ]; then
-            FS_RESULTS_MSG="Detected $FS_HIGH_COUNT high and $FS_CRITICAL_COUNT critical vulnerabilities"
+          FS_RESULT_MSG=":file_folder: *File System Scan:*"
+
+          if [ $FS_HIGH_COUNT -gt 0 ] || [ $FS_CRITICAL_COUNT -gt 0 ]; then
+            if [ $FS_HIGH_COUNT -gt 0 ]; then
+              FS_RESULT_MSG="$FS_RESULT_MSG $FS_HIGH_COUNT High vulnerabilities :warning:"
+            else
+              FS_RESULT_MSG="$FS_RESULT_MSG 0 High vulnerabilities :white_check_mark:"
+            fi
+
+            if [ $FS_CRITICAL_COUNT -gt 0 ]; then
+              FS_RESULT_MSG="$FS_RESULT_MSG $FS_CRITICAL_COUNT Critical vulnerabilities :bangbang:"
+            else
+              FS_RESULT_MSG="$FS_RESULT_MSG 0 Critical vulnerabilities :white_check_mark:"
+            fi
           else
-            FS_RESULTS_MSG="No vulnerabilities found"
+            FS_RESULT_MSG="$FS_RESULT_MSG No High or Critical vulnerabilities found :white_check_mark:"
           fi
 
           echo "FS_RESULTS_MSG=$FS_RESULTS_MSG" >> $GITHUB_ENV
@@ -92,18 +104,31 @@ jobs:
           IMAGE_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $IMAGE_SCAN_OUTPUT)
           IMAGE_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $IMAGE_SCAN_OUTPUT)
 
-          if [ $IMAGE_CRITICAL_COUNT -gt 0 ] || [ $IMAGE_HIGH_COUNT -gt 0 ]; then
-            IMAGE_RESULTS_MSG="Detected $IMAGE_HIGH_COUNT high and $IMAGE_CRITICAL_COUNT critical vulnerabilities"
+          IMAGE_RESULT_MSG=":whale: *Docker Image Scan:*"
+
+          if [ $IMAGE_HIGH_COUNT -gt 0 ] || [ $IMAGE_CRITICAL_COUNT -gt 0 ]; then
+            if [ $IMAGE_HIGH_COUNT -gt 0 ]; then
+              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG $IMAGE_HIGH_COUNT High vulnerabilities :warning:"
+            else
+              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG 0 High vulnerabilities :white_check_mark:"
+            fi
+
+            if [ $IMAGE_CRITICAL_COUNT -gt 0 ]; then
+              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG $IMAGE_CRITICAL_COUNT Critical vulnerabilities :bangbang:"
+            else
+              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG 0 Critical vulnerabilities :white_check_mark:"
+            fi
           else
-            IMAGE_RESULTS_MSG="No vulnerabilities found"
+            IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG No High or Critical vulnerabilities found :white_check_mark:"
           fi
 
-          echo "IMAGE_RESULTS_MSG=$IMAGE_RESULTS_MSG" >> $GITHUB_ENV
+          echo "IMAGE_RESULTS_MSG=$IMAGE_RESULT_MSG" >> $GITHUB_ENV
 
       - name: Notify about HIGH+ vulnerabilities
         env:
           FS_RESULTS_MSG: ${{ env.FS_RESULTS_MSG }}
           IMAGE_RESULTS_MSG: ${{ env.IMAGE_RESULTS_MSG }}
+          TITLE: ":police_car: *Trivy Scan Results for ${{ env.ECR_REPOSITORY }}!*"
         # uses: slackapi/slack-github-action@v2
         # with:
           # method: chat.postMessage
@@ -112,7 +137,7 @@ jobs:
           #   channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
           #   text: ":police_car: Trivy 'fs' scan of frontend\n${{ HIGH_COUNT }} high and ${{ CRITICAL_COUNT }} critical vulnerabilities"
         run: |
-          echo ":police_car: Trivy scan of fronted:"
+          echo "$TITLE"
           echo "$FS_RESULTS_MSG"
           echo "$IMAGE_RESULTS_MSG"
 
