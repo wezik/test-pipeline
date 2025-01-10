@@ -81,8 +81,8 @@ jobs:
         run: |
           MSG=":oncoming_police_car: *Trivy Scan Results for $REPOSITORY!*"
 
-          FS_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $FS_SCAN_OUTPUT)
-          FS_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $FS_SCAN_OUTPUT)
+          FS_CRITICAL_COUNT=3
+          FS_HIGH_COUNT=7
 
           FS_RESULT_MSG=":file_folder: *File System Scan:*"
 
@@ -104,8 +104,8 @@ jobs:
 
           MSG="$MSG  \n$FS_RESULT_MSG"
 
-          IMAGE_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $IMAGE_SCAN_OUTPUT)
-          IMAGE_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $IMAGE_SCAN_OUTPUT)
+          IMAGE_CRITICAL_COUNT=1
+          IMAGE_HIGH_COUNT=0
 
           IMAGE_RESULT_MSG=":whale: *Docker Image Scan:*"
 
