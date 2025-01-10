@@ -1,44 +1,101 @@
 name: Trivy scan
 
 on:
-  push:
+  schedule:
+    - cron: '0 0 * * *' # Run every 1 day of the month
+  workflow_dispatch:
 
 jobs:
   scan:
     name: Scan
     runs-on: ubuntu-22.04
+    env:
+      AWS_REGION: eu-central-1
+      ECR_REPOSITORY: farutex-frontend
+      SCAN_FORMAT: json
+      FS_SCAN_OUTPUT: fs-scan-results.json
+      IMAGE_SCAN_OUTPUT: image-scan-results.json
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Scan repository
+      - name: Run Trivy fs scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
-          output: 'trivy-scan-results.json'
-          format: 'json'
+          output: ${{ env.FS_SCAN_OUTPUT }}
+          format: ${{ env.SCAN_FORMAT }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # TODO: add credentials to secrets
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Run Trivy image scan on latest ECR image
+        run: |
+          IMAGE_URI=$(\
+            aws ecr describe-repositories \
+            --repository-names $ECR_REPOSITORY \
+            --region $AWS_REGION \
+            --query "repositories[0].repositoryUri" \
+            --output text)
+          echo "IMAGE_URI=$IMAGE_URI:latest" >> $GITHUB_ENV
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_URI }}
+          scan-type: 'image'
+          output: ${{ env.IMAGE_SCAN_OUTPUT }}
+          format: ${{ env.SCAN_FORMAT }}
+          skip-setup-trivy: true
 
       - name: Upload scan results
+        env: 
         uses: actions/upload-artifact@v4
         with:
           name: 'trivy-scan-results'
-          path: 'trivy-scan-results.json'
+          path: |
+            ${{ env.FS_SCAN_OUTPUT }}
+            ${{ env.IMAGE_SCAN_OUTPUT }}
           retention-days: 1
 
       - name: Collect HIGH+ vulnerabilities
+        env: 
+          FS_SCAN_OUTPUT: ${{ env.FS_SCAN_OUTPUT }}
+          IMAGE_SCAN_OUTPUT: ${{ env.IMAGE_SCAN_OUTPUT }}
         run: |
-          CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' trivy-scan-results.json)
-          HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' trivy-scan-results.json)
-          if [ $CRITICAL_COUNT -gt 0 ] || [ $HIGH_COUNT -gt 0 ]; then
-            TRIVY_RESULTS_MSG="Detected $HIGH_COUNT high and $CRITICAL_COUNT critical vulnerabilities"
+          FS_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $FS_SCAN_OUTPUT)
+          FS_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $FS_SCAN_OUTPUT)
+
+          if [ $FS_CRITICAL_COUNT -gt 0 ] || [ $FS_HIGH_COUNT -gt 0 ]; then
+            FS_RESULTS_MSG="Detected $FS_HIGH_COUNT high and $FS_CRITICAL_COUNT critical vulnerabilities"
           else
-            TRIVY_RESULTS_MSG="No vulnerabilities found"
+            FS_RESULTS_MSG="No vulnerabilities found"
           fi
-          echo "TRIVY_RESULTS_MSG=$TRIVY_RESULTS_MSG" >> $GITHUB_ENV
+
+          echo "FS_RESULTS_MSG=$FS_RESULTS_MSG" >> $GITHUB_ENV
+
+          IMAGE_CRITICAL_COUNT=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' $IMAGE_SCAN_OUTPUT)
+          IMAGE_HIGH_COUNT=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' $IMAGE_SCAN_OUTPUT)
+
+          if [ $IMAGE_CRITICAL_COUNT -gt 0 ] || [ $IMAGE_HIGH_COUNT -gt 0 ]; then
+            IMAGE_RESULTS_MSG="Detected $IMAGE_HIGH_COUNT high and $IMAGE_CRITICAL_COUNT critical vulnerabilities"
+          else
+            IMAGE_RESULTS_MSG="No vulnerabilities found"
+          fi
+
+          echo "IMAGE_RESULTS_MSG=$IMAGE_RESULTS_MSG" >> $GITHUB_ENV
 
       - name: Notify about HIGH+ vulnerabilities
         env:
-          TRIVY_RESULTS_MSG: ${{ env.TRIVY_RESULTS_MSG }}
+          FS_RESULTS_MSG: ${{ env.FS_RESULTS_MSG }}
+          IMAGE_RESULTS_MSG: ${{ env.IMAGE_RESULTS_MSG }}
         # uses: slackapi/slack-github-action@v2
         # with:
           # method: chat.postMessage
@@ -47,7 +104,8 @@ jobs:
           #   channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
           #   text: ":police_car: Trivy 'fs' scan of frontend\n${{ HIGH_COUNT }} high and ${{ CRITICAL_COUNT }} critical vulnerabilities"
         run: |
-          echo ":police_car: Trivy 'fs' scan of fronted results:"
-          echo "$TRIVY_RESULTS_MSG"
+          echo ":police_car: Trivy scan of fronted:"
+          echo "$FS_RESULTS_MSG"
+          echo "$IMAGE_RESULTS_MSG"
 
 
