@@ -1,8 +1,6 @@
 name: Trivy scan
 
 on:
-  schedule:
-    - cron: '0 0 * * *' # Run every 1 day of the month
   workflow_dispatch:
 
 jobs:
