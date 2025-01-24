@@ -1,8 +1,6 @@
 name: Vulnerability scan
 
 on:
-  schedule:
-    - cron: '0 12 1 * *' # Run 12:00 PM UTC on 1st day of the month
   workflow_dispatch: # Allow manual trigger mostly for testing
 
 jobs:
@@ -27,19 +25,18 @@ jobs:
       - name: Resolve latest image
         id: image-resolver
         run: |
-          repo_url=$(\
-            aws ecr describe-repositories \
-            --repository-names farutex-frontend \
-            --region eu-central-1 \
+          repo_url=$(aws ecr describe-repositories \
+            --repository-names "farutex-frontend" \
+            --region "eu-central-1" \
             --query "repositories[0].repositoryUri" \
             --output text)
 
           image_tag=$(aws ecr describe-images \
-            --repository-name farutex-frontend \
+            --repository-name "farutex-frontend" \
             --output json \
-            | jq -r '.imageDetails \
-            | map(select(has("imageTags"))) \
-            | max_by(.imagePushedAt) \
+            | jq -r '.imageDetails
+            | map(select(has("imageTags")))
+            | max_by(.imagePushedAt)
             | .imageTags[0]')
 
           echo "::notice ::Latest docker image: $repo_url:$image_tag"
@@ -64,32 +61,33 @@ jobs:
       - name: Prepare Slack notification
         id: parser
         run: |
-          msg="**e-bidfood Frontend** → critical or high vulnerabilities"
+          msg="*e-bidfood Frontend* → critical or high vulnerabilities"
+          #
+          # severity_counts=$(jq -r '[.. | .Severity?] | {
+          #   low: (map(select(. == "LOW")) | length),
+          #   medium: (map(select(. == "MEDIUM")) | length),
+          #   height: (map(select(. == "HIGH")) | length),
+          #   critical: (map(select(. == "CRITICAL")) | length)
+          # }' image-scan-results.json)
+          #
+          # low=$(echo "$severity_counts" | jq -r '.low')
+          # medium=$(echo "$severity_counts" | jq -r '.medium')
+          # high=$(echo "$severity_counts" | jq -r '.high')
+          # critical=$(echo "$severity_counts" | jq -r '.critical')
 
-          severity_counts=$(jq -r '[.. | .Severity?] | {\
-            low: (map(select(. == "LOW")) | length), \
-            medium: (map(select(. == "MEDIUM")) | length), \
-            height: (map(select(. == "HIGH")) | length), \
-            critical: (map(select(. == "CRITICAL")) | length)
-          }' image_scan_results.json)
+          low=$(jq '[.. | .Severity? | select(. == "LOW")] | length' image-scan-results.json)
+          medium=$(jq '[.. | .Severity? | select(. == "MEDIUM")] | length' image-scan-results.json)
+          high=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' image-scan-results.json)
+          critical=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' image-scan-results.json)
 
-          low=$(echo "$severity_counts" | jq -r '.low')
-          medium=$(echo "$severity_counts" | jq -r '.medium')
-          high=$(echo "$severity_counts" | jq -r '.high')
-          critical=$(echo "$severity_counts" | jq -r '.critical')
-
-          # low=$(jq '[.. | .Severity? | select(. == "LOW")] | length' image-scan-results.json)
-          # medium=$(jq '[.. | .Severity? | select(. == "MEDIUM")] | length' image-scan-results.json)
-          # high=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' image-scan-results.json)
-          # critical=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' image-scan-results.json)
-
-          if [ high -gt 0 ] || [ critical -gt 0 ]; then
+          if [ $high -gt 0 ] || [ $critical -gt 0 ]; then
             msg=":oncoming_police_car: $msg <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|detected>"
           else
-            msg=":white_check_mark: $msg <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|detected>"
+            msg=":white_check_mark: $msg <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|not detected>"
           fi
+
           echo "::notice  ::vulnerabilities per severity → low $low / medium $medium / high $high / critical $critical"
-          msg="$msg\n:bar_chart: vulnerabilities per severity → low: **$low** / medium: **$medium** / high: **$high** / critical: **$critical**"
+          msg="$msg\n:bar_chart: vulnerabilities per severity → low: *$low* / medium: *$medium* / high: *$high* / critical: *$critical*"
           echo "notification_msg=$msg" >> "$GITHUB_OUTPUT"
 
       - name: Send Slack notification
@@ -98,6 +96,7 @@ jobs:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
+            unfurl_links: false
             channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
             text: "${{ steps.parser.outputs.notification_msg }}"
-
+            
