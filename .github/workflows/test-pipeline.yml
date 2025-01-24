@@ -1,142 +1,103 @@
-name: Trivy scan
+name: Vulnerability scan
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 12 1 * *' # Run 12:00 PM UTC on 1st day of the month
+  workflow_dispatch: # Allow manual trigger mostly for testing
 
 jobs:
   scan:
-    name: Scan
-    runs-on: ubuntu-22.04
-    env:
-      AWS_REGION: eu-central-1
-      ECR_REPOSITORY: farutex-frontend
-      SCAN_FORMAT: json
-      FS_SCAN_OUTPUT: fs-scan-results.json
-      IMAGE_SCAN_OUTPUT: image-scan-results.json
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run Trivy fs scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          output: ${{ env.FS_SCAN_OUTPUT }}
-          format: ${{ env.SCAN_FORMAT }}
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # TODO: add credentials to secrets
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: eu-central-1
 
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Create ECR Image URI and fetch latest tag
+      - name: Resolve latest image
+        id: image-resolver
         run: |
-          REPO_URI=$(\
+          repo_url=$(\
             aws ecr describe-repositories \
-            --repository-names $ECR_REPOSITORY \
-            --region $AWS_REGION \
+            --repository-names farutex-frontend \
+            --region eu-central-1 \
             --query "repositories[0].repositoryUri" \
             --output text)
 
-          IMAGE_TAG=$(aws ecr describe-images \
+          image_tag=$(aws ecr describe-images \
             --repository-name farutex-frontend \
-            --region eu-central-1 \
-            --query "sort_by(imageDetails, &imagePushedAt)[-1].imageTags[0]" \
-            --output json | jq -r) # Text format loses order of tags so it's a workaround to get the latest tag
+            --output json \
+            | jq -r '.imageDetails \
+            | map(select(has("imageTags"))) \
+            | max_by(.imagePushedAt) \
+            | .imageTags[0]')
 
-          echo "IMAGE_URI=$REPO_URI:$IMAGE_TAG" >> $GITHUB_ENV
+          echo "::notice ::Latest docker image: $repo_url:$image_tag"
+          echo "image_ref=$repo_url:$image_tag" >> "$GITHUB_OUTPUT"
 
-      - name: Run Trivy image scan on ECR image
+      - name: Scan docker image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.IMAGE_URI }}
+          image-ref: ${{ steps.image-resolver.outputs.image_ref }}
           scan-type: 'image'
-          output: ${{ env.IMAGE_SCAN_OUTPUT }}
-          format: ${{ env.SCAN_FORMAT }}
-          skip-setup-trivy: true
+          output: image-scan-results.json
+          format: json
 
       - name: Upload scan results
         uses: actions/upload-artifact@v4
         with:
           name: 'trivy-scan-results'
-          path: |
-            ${{ env.FS_SCAN_OUTPUT }}
-            ${{ env.IMAGE_SCAN_OUTPUT }}
-          retention-days: 1 # TODO: adjust the retention time it is only for testing
+          path: image-scan-results.json
+          retention-days: 31
+          if-no-files-found: error
 
-      - name: Fromat Slack message
-        env: 
-          FS_SCAN_OUTPUT: ${{ env.FS_SCAN_OUTPUT }}
-          IMAGE_SCAN_OUTPUT: ${{ env.IMAGE_SCAN_OUTPUT }}
-          REPOSITORY: ${{ env.ECR_REPOSITORY }}
+      - name: Prepare Slack notification
+        id: parser
         run: |
-          MSG=":oncoming_police_car: *Trivy Scan Results for $REPOSITORY!*"
+          msg="**e-bidfood Frontend** → critical or high vulnerabilities"
 
-          FS_CRITICAL_COUNT=3
-          FS_HIGH_COUNT=7
+          severity_counts=$(jq -r '[.. | .Severity?] | {\
+            low: (map(select(. == "LOW")) | length), \
+            medium: (map(select(. == "MEDIUM")) | length), \
+            height: (map(select(. == "HIGH")) | length), \
+            critical: (map(select(. == "CRITICAL")) | length)
+          }' image_scan_results.json)
 
-          FS_RESULT_MSG=":file_folder: *File System Scan:*"
+          low=$(echo "$severity_counts" | jq -r '.low')
+          medium=$(echo "$severity_counts" | jq -r '.medium')
+          high=$(echo "$severity_counts" | jq -r '.high')
+          critical=$(echo "$severity_counts" | jq -r '.critical')
 
-          if [ $FS_HIGH_COUNT -gt 0 ] || [ $FS_CRITICAL_COUNT -gt 0 ]; then
-            if [ $FS_HIGH_COUNT -gt 0 ]; then
-              FS_RESULT_MSG="$FS_RESULT_MSG $FS_HIGH_COUNT High vulnerabilities :warning:"
-            else
-              FS_RESULT_MSG="$FS_RESULT_MSG 0 High vulnerabilities :white_check_mark:"
-            fi
+          # low=$(jq '[.. | .Severity? | select(. == "LOW")] | length' image-scan-results.json)
+          # medium=$(jq '[.. | .Severity? | select(. == "MEDIUM")] | length' image-scan-results.json)
+          # high=$(jq '[.. | .Severity? | select(. == "HIGH")] | length' image-scan-results.json)
+          # critical=$(jq '[.. | .Severity? | select(. == "CRITICAL")] | length' image-scan-results.json)
 
-            if [ $FS_CRITICAL_COUNT -gt 0 ]; then
-              FS_RESULT_MSG="$FS_RESULT_MSG $FS_CRITICAL_COUNT Critical vulnerabilities :bangbang:"
-            else
-              FS_RESULT_MSG="$FS_RESULT_MSG 0 Critical vulnerabilities :white_check_mark:"
-            fi
+          if [ high -gt 0 ] || [ critical -gt 0 ]; then
+            msg=":oncoming_police_car: $msg <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|detected>"
           else
-            FS_RESULT_MSG="$FS_RESULT_MSG No High or Critical vulnerabilities found :white_check_mark:"
+            msg=":white_check_mark: $msg <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|detected>"
           fi
+          echo "::notice  ::vulnerabilities per severity → low $low / medium $medium / high $high / critical $critical"
+          msg="$msg\n:bar_chart: vulnerabilities per severity → low: **$low** / medium: **$medium** / high: **$high** / critical: **$critical**"
+          echo "notification_msg=$msg" >> "$GITHUB_OUTPUT"
 
-          MSG="$MSG  \n$FS_RESULT_MSG"
-
-          IMAGE_CRITICAL_COUNT=1
-          IMAGE_HIGH_COUNT=0
-
-          IMAGE_RESULT_MSG=":whale: *Docker Image Scan:*"
-
-          if [ $IMAGE_HIGH_COUNT -gt 0 ] || [ $IMAGE_CRITICAL_COUNT -gt 0 ]; then
-            if [ $IMAGE_HIGH_COUNT -gt 0 ]; then
-              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG $IMAGE_HIGH_COUNT High vulnerabilities :warning:"
-            else
-              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG 0 High vulnerabilities :white_check_mark:"
-            fi
-
-            if [ $IMAGE_CRITICAL_COUNT -gt 0 ]; then
-              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG $IMAGE_CRITICAL_COUNT Critical vulnerabilities :bangbang:"
-            else
-              IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG 0 Critical vulnerabilities :white_check_mark:"
-            fi
-          else
-            IMAGE_RESULT_MSG="$IMAGE_RESULT_MSG No High or Critical vulnerabilities found :white_check_mark:"
-          fi
-
-          MSG="$MSG  \n$IMAGE_RESULT_MSG"
-          echo "SLACK_MESSAGE=$MSG" >> $GITHUB_ENV
-
-      - name: Send notification to Slack
+      - name: Send Slack notification
         uses: slackapi/slack-github-action@v2
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_BOT_CHANNEL_ID }}
-            text: "$SLACK_MSG"
-            blocks: 
-              - type: "section"
-                text:
-                  type: "mrkdwn"
-                  text: "${{ env.SLACK_MESSAGE }}"
+            text: "${{ steps.parser.outputs.notification_msg }}"
 
